@@ -210,7 +210,7 @@ void CACHE::handle_fill()
 
                  
 		    //  writeback_packet.fill_level = fill_level << 1;
-		    writeback_packet.fill_level = 8; //@Sujeet Why this line. Whenever we are evicting a dirty block from L1 why can't we put that in l2
+		    writeback_packet.fill_level = 8; 
                     writeback_packet.cpu = fill_cpu;
                     writeback_packet.address = block[set][way].address;
                     writeback_packet.full_addr = block[set][way].full_addr;
@@ -447,7 +447,7 @@ void CACHE::handle_writeback()
 
             }
             else */
-	    if (cache_type == IS_L2C || cache_type == IS_L1D || cache_type == IS_LLC)//Write no-allocate for write-back packets  //@Sujeet why this ?
+	    if (cache_type == IS_L2C || cache_type == IS_L1D || cache_type == IS_LLC)//Write no-allocate for write-back packets  
 	    {
 		uint8_t miss_handled = 1;
 		if (lower_level->get_occupancy(2, block[set][way].address) == lower_level->get_size(2, block[set][way].address))
