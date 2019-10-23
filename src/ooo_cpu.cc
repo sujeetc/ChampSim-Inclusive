@@ -1863,7 +1863,7 @@ void O3_CPU::retire_rob()
 
                         // sq_index and rob_index are no longer available after retirement
                         // but we pass this information to avoid segmentation fault
-                        data_packet.fill_level = FILL_DRC; // Changed from L1 to LLC
+                        data_packet.fill_level = FILL_L1; // Changed from L1 to LLC
                         data_packet.cpu = cpu;
                         data_packet.data_index = SQ.entry[sq_index].data_index;
                         data_packet.sq_index = sq_index;

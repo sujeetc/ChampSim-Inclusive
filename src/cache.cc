@@ -8,19 +8,30 @@ uint64_t l2pf_access = 0;
 
 bool CACHE::make_inclusive(int cpu,int evict_cpu,CACHE &cache,uint64_t address,uint64_t instr_id)
 {
-	
- 
+
 	if(cache.MSHR.occupancy != 0)
 	{
 		for (uint32_t i=0; i<cache.MSHR.SIZE; i++)
 			if (cache.MSHR.entry[i].address == address)
 			{
+			//	cout<<"MSHR present no replacement: "<<cache_type<<" "<<cache.cache_type<<" "<<hex<<address<<dec<<endl;
 					return false;
 			}
 	}
 
+        if(cache.cache_type == IS_L2C && cache.WQ.occupancy != 0)
+        {
+                for (uint32_t i=0; i<cache.WQ.SIZE; i++)
+                        if (cache.WQ.entry[i].address == address)
+                        {
+			//	cout<<"WQ present no replacement: "<<cache_type<<" "<<cache.cache_type<<" "<<hex<<address<<dec<<endl;
+                                        return false;
+                        }
+        }
+
+
 	int set = cache.get_set(address);
-	for(int way = 0; way < cache.NUM_WAY; way++)
+	for(unsigned int way = 0; way < cache.NUM_WAY; way++)
 		if(cache.block[set][way].valid && cache.block[set][way].tag == address)
 		{
 			if(cache.block[set][way].dirty)
@@ -30,58 +41,47 @@ bool CACHE::make_inclusive(int cpu,int evict_cpu,CACHE &cache,uint64_t address,u
 					if (cache.lower_level->get_occupancy(2, cache.block[set][way].address) == cache.lower_level->get_size(2, cache.block[set][way].address)) {
 
 						cache.lower_level->increment_WQ_FULL(cache.block[set][way].address);
-                        
+
 						return false;
 					}
 					else {
 						PACKET writeback_packet;
-
-						writeback_packet.fill_level = 8; // evicted dirty block dont fill cache(write no-allocate) 
-						writeback_packet.cpu = cpu;
+						
+						writeback_packet.fill_level = cache.fill_level << 1;
+						//writeback_packet.fill_level = FILL_DRC; // evicted dirty block dont fill cache(write no-allocate)
+						writeback_packet.cpu = cache.cpu;
 						writeback_packet.address = cache.block[set][way].address;
 						writeback_packet.full_addr = cache.block[set][way].full_addr;
 						writeback_packet.data = cache.block[set][way].data;
 						writeback_packet.instr_id = instr_id;
 						writeback_packet.ip = 0;
 						writeback_packet.type = WRITEBACK;
-						writeback_packet.event_cycle = current_core_cycle[cpu];
+						writeback_packet.event_cycle = current_core_cycle[cache.cpu];
 
 						cache.lower_level->add_wq(&writeback_packet);
 						cache.block[set][way].valid = 0;
-						cache.back_hits++;
-						if(NAME.find("LLC") != NAME.npos)
-							cache.llc_back_hits++;
-						else
-							cache.l2c_back_hits++;				
-						cache.dirty_back_hits++;
-						if(cpu == evict_cpu)
-							cache.intra_back_hits++;
-						else
-							cache.inter_back_hits++;
+						
+						/*
+						if(cache.block[set][way].address == QTRACE_ADDR)
+						{
+							cout<<"Dirty block added to lower level WQ: "<<(dynamic_cast<CACHE*>(cache.lower_level))->NAME<<endl;
+						}*/
+
+			
+
+						return true;
 					}
 				}
 			}
 			else
 			{
 				cache.block[set][way].valid = 0;
-				cache.back_hits++;
-				
-                if(NAME.find("LLC") != NAME.npos)
-                    cache.llc_back_hits++;
-                else
-                    cache.l2c_back_hits++; 
-				
-                if(cpu == evict_cpu)
-                    cache.intra_back_hits++;
-                else
-                    cache.inter_back_hits++;
-				
-                break;
+	
+				//break;
 			}
 		}
 	return true;
 }
-
 
 void CACHE::handle_fill()
 {
@@ -145,47 +145,46 @@ void CACHE::handle_fill()
 
 #ifdef INCLUSIVE
 
-		// When eviction is done at LLC Level
+        // When eviction is done at LLC Level
 
-		if(cache_type == IS_LLC && block[set][way].valid)
-		{
-			for(int i=0;i<NUM_CPUS;i++)
-			{
-				if(!make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L1I,block[set][way].address,MSHR.entry[mshr_index].instr_id))
-				{
-					do_fill = 0;
-					STALL[MSHR.entry[mshr_index].type]++;
-				}
-				if(!make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L1D,block[set][way].address,MSHR.entry[mshr_index].instr_id))
-				{
-					do_fill = 0;
-					STALL[MSHR.entry[mshr_index].type]++;
-				}
-				if(do_fill && !make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L2C,block[set][way].address,MSHR.entry[mshr_index].instr_id))
-				{
-					do_fill = 0;
-					STALL[MSHR.entry[mshr_index].type]++;
-				}
-			}
-			if(do_fill == 0)
-				inclusive_stall++;
-		}
+        if(cache_type == IS_LLC && block[set][way].valid)
+        {
+        	for(int i=0;i<NUM_CPUS;i++)
+        	{
+        		if(!make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L1I,block[set][way].address,MSHR.entry[mshr_index].instr_id))
+        		{
+        			do_fill = 0;
+        			STALL[MSHR.entry[mshr_index].type]++;
+        		}
+        		if(!make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L1D,block[set][way].address,MSHR.entry[mshr_index].instr_id))
+        		{
+        			do_fill = 0;
+        			STALL[MSHR.entry[mshr_index].type]++;
+        		}
+        		if(do_fill && !make_inclusive(i,MSHR.entry[mshr_index].cpu,ooo_cpu[i].L2C,block[set][way].address,MSHR.entry[mshr_index].instr_id))
+        		{
+        			do_fill = 0;
+        			STALL[MSHR.entry[mshr_index].type]++;
+        		}
+        	}
 
-		// When eviction is done at L2 Level
+        }
 
-		if(cache_type == IS_L2C && block[set][way].valid)
-		{
-			if(!make_inclusive(cpu,MSHR.entry[mshr_index].cpu,ooo_cpu[cpu].L1I,block[set][way].address,MSHR.entry[mshr_index].instr_id))
-			{
+        // When eviction is done at L2 Level
+
+        if(cache_type == IS_L2C && block[set][way].valid)
+        {
+        	if(!make_inclusive(cpu,MSHR.entry[mshr_index].cpu,ooo_cpu[cpu].L1I,block[set][way].address,MSHR.entry[mshr_index].instr_id))
+        	{
+        		do_fill = 0;
+        		STALL[MSHR.entry[mshr_index].type]++;
+        	}
+        	if(!make_inclusive(cpu,MSHR.entry[mshr_index].cpu,ooo_cpu[cpu].L1D,block[set][way].address,MSHR.entry[mshr_index].instr_id))
+		    {
 				do_fill = 0;
 				STALL[MSHR.entry[mshr_index].type]++;
-			}
-			if(!make_inclusive(cpu,MSHR.entry[mshr_index].cpu,ooo_cpu[cpu].L1D,block[set][way].address,MSHR.entry[mshr_index].instr_id))
-			    {
-					do_fill = 0;
-					STALL[MSHR.entry[mshr_index].type]++;
-			    }
-		}
+		    }
+        }
 #endif
 
         // is this dirty?
@@ -209,8 +208,8 @@ void CACHE::handle_fill()
                     PACKET writeback_packet;
 
                  
-		    //  writeback_packet.fill_level = fill_level << 1;
-		    writeback_packet.fill_level = 8; 
+		    	    writeback_packet.fill_level = fill_level << 1;
+		    		//writeback_packet.fill_level = 8; 
                     writeback_packet.cpu = fill_cpu;
                     writeback_packet.address = block[set][way].address;
                     writeback_packet.full_addr = block[set][way].full_addr;
@@ -366,7 +365,7 @@ void CACHE::handle_writeback()
             cout << " full_addr: " << WQ.entry[index].full_addr << dec;
             cout << " cycle: " << WQ.entry[index].event_cycle << endl; });
 
-            /*if (cache_type == IS_L1D) { // RFO miss
+            if (cache_type == IS_L1D) { // RFO miss
 
                 // check mshr
                 uint8_t miss_handled = 1;
@@ -446,8 +445,8 @@ void CACHE::handle_writeback()
                 }
 
             }
-            else */
-	    if (cache_type == IS_L2C || cache_type == IS_L1D || cache_type == IS_LLC)//Write no-allocate for write-back packets  
+            
+	  /*  if (cache_type == IS_L2C || cache_type == IS_L1D || cache_type == IS_LLC)//Write no-allocate for write-back packets  
 	    {
 		uint8_t miss_handled = 1;
 		if (lower_level->get_occupancy(2, block[set][way].address) == lower_level->get_size(2, block[set][way].address))
@@ -467,7 +466,7 @@ void CACHE::handle_writeback()
                     // remove this entry from WQ
                     WQ.remove_queue(&WQ.entry[index]);
                 }
-	    }
+	    }*/
 	    else	{
                 // find victim
                 uint32_t set = get_set(WQ.entry[index].address), way;
@@ -487,31 +486,36 @@ void CACHE::handle_writeback()
                 uint8_t  do_fill = 1;
 
 #ifdef INCLUSIVE
-        
+
+        // When eviction is done at LLC Level
+
         if(cache_type == IS_LLC && block[set][way].valid)
         {
-	//	cout<<"ERROR"<<endl;
         	for(int i=0;i<NUM_CPUS;i++)
         	{
         		if(!make_inclusive(i,WQ.entry[index].cpu,ooo_cpu[i].L1I,block[set][way].address,WQ.entry[index].instr_id))
-
         		{
         			do_fill = 0;
-				    STALL[WQ.entry[index].type]++;
+        			STALL[WQ.entry[index].type]++;
         		}
         		if(!make_inclusive(i,WQ.entry[index].cpu,ooo_cpu[i].L1D,block[set][way].address,WQ.entry[index].instr_id))
-			    {
-				    do_fill = 0;
-				    STALL[WQ.entry[index].type]++;
-			    }
+        		{
+        			do_fill = 0;
+        			STALL[WQ.entry[index].type]++;
+        		}
         		if(do_fill && !make_inclusive(i,WQ.entry[index].cpu,ooo_cpu[i].L2C,block[set][way].address,WQ.entry[index].instr_id))
-			    {
-				    do_fill = 0;
-			    	STALL[WQ.entry[index].type]++;
-		    	}
+        		{
+        			do_fill = 0;
+        			STALL[WQ.entry[index].type]++;
+        		}
         	}
+
+        	//if(do_fill == 0)
+        	//	inclusive_stall++;
         }
-        
+
+        // When eviction is done at L2 Level
+
         if(cache_type == IS_L2C && block[set][way].valid)
         {
         	if(!make_inclusive(cpu,WQ.entry[index].cpu,ooo_cpu[cpu].L1I,block[set][way].address,WQ.entry[index].instr_id))
@@ -520,12 +524,11 @@ void CACHE::handle_writeback()
         		STALL[WQ.entry[index].type]++;
         	}
         	if(!make_inclusive(cpu,WQ.entry[index].cpu,ooo_cpu[cpu].L1D,block[set][way].address,WQ.entry[index].instr_id))
-			{
+		    {
 				do_fill = 0;
 				STALL[WQ.entry[index].type]++;
-			}
+		    }
         }
-
 #endif
 
                 // is this dirty?
@@ -548,8 +551,8 @@ void CACHE::handle_writeback()
                         else { 
                             PACKET writeback_packet;
 
-                            //writeback_packet.fill_level = fill_level << 1;
-			    writeback_packet.fill_level = 8; // No write allocate
+                            writeback_packet.fill_level = fill_level << 1;
+			    //writeback_packet.fill_level = 8; // No write allocate
                             writeback_packet.cpu = writeback_cpu;
                             writeback_packet.address = block[set][way].address;
                             writeback_packet.full_addr = block[set][way].full_addr;
@@ -625,11 +628,12 @@ void CACHE::handle_writeback()
 void CACHE::handle_read()
 {
     // handle read
-    uint32_t read_cpu = RQ.entry[RQ.head].cpu;
+    
+    for (uint32_t i=0; i<MAX_READ; i++) {
+
+    	uint32_t read_cpu = RQ.entry[RQ.head].cpu;
     if (read_cpu == NUM_CPUS)
         return;
-
-    for (uint32_t i=0; i<MAX_READ; i++) {
 
         // handle the oldest entry
         if ((RQ.entry[RQ.head].event_cycle <= current_core_cycle[read_cpu]) && (RQ.occupancy > 0)) {
@@ -882,11 +886,13 @@ void CACHE::handle_read()
 void CACHE::handle_prefetch()
 {
     // handle prefetch
-    uint32_t prefetch_cpu = PQ.entry[PQ.head].cpu;
-    if (prefetch_cpu == NUM_CPUS)
-        return;
+   
 
     for (uint32_t i=0; i<MAX_READ; i++) {
+
+    	 uint32_t prefetch_cpu = PQ.entry[PQ.head].cpu;
+    if (prefetch_cpu == NUM_CPUS)
+        return;
 
         // handle the oldest entry
         if ((PQ.entry[PQ.head].event_cycle <= current_core_cycle[prefetch_cpu]) && (PQ.occupancy > 0)) {
@@ -1193,45 +1199,12 @@ int CACHE::invalidate_entry(uint64_t inval_addr)
     return match_way;
 }
 
-//@Vishal
-//Shift WQ entries by one place to fill a hole at wq_index
-void CACHE::shiftWQEntries(int wq_index)
-{
-	//cout<<"Deleting this entry from "<<NAME<<" "<<WQ.entry[wq_index].address<<wq_index<<endl;
-	if(WQ.head == wq_index)
-		return;
-	int val = WQ.head > wq_index ? 0 : WQ.head;
-	for( int i = wq_index ; i > val ; i -- )
-	{
-		WQ.entry[i] = *(&WQ.entry[i-1]);
-	}
-	if(WQ.head > wq_index)
-	{
-		WQ.entry[0] = *(&WQ.entry[WQ.SIZE-1]);
-		for(int i = WQ.SIZE-1; i > WQ.head ; i--)
-		{
-			WQ.entry[i] = *(&WQ.entry[i-1]);
-		}
-	}
-}
-
 int CACHE::add_rq(PACKET *packet)
 {
     // check for the latest wirtebacks in the write queue
     int wq_index = WQ.check_queue(packet);
-
-
-    //@Vishal If packet hit in WQ, add it to lower level WQ and remove from current Queue
-    if(wq_index != -1)
-    {
-	    lower_level->add_wq(&WQ.entry[wq_index]);
-	    shiftWQEntries(wq_index);
-	    WQ.remove_queue(&WQ.entry[WQ.head]);
-	    wq_index = -1;
-    }
-    assert(WQ.check_queue(packet)==-1);
-
-    if (wq_index != -1) {
+    
+   if (wq_index != -1) {
         
         // check fill level
         if (packet->fill_level < fill_level) {
