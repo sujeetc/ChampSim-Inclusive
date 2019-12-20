@@ -188,7 +188,7 @@ void CACHE::handle_fill()
 #endif
 
         // is this dirty?
-        if (do_fill && block[set][way].dirty) {
+        if (do_fill && block[set][way].valid && block[set][way].dirty) {
 
             // check if the lower level WQ has enough room to keep this writeback request
             if (lower_level) {
@@ -532,7 +532,7 @@ void CACHE::handle_writeback()
 #endif
 
                 // is this dirty?
-                if (do_fill && block[set][way].dirty) {
+                if (do_fill && block[set][way].valid && block[set][way].dirty) {
 
                     // check if the lower level WQ has enough room to keep this writeback request
                     if (lower_level) { 
